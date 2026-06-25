@@ -26,6 +26,7 @@ CSV_FIELDS = [
     "server_location",
     "isp",
     "external_ip",
+    "is_vpn",
     "error",
 ]
 
@@ -90,6 +91,7 @@ def run_speedtest(show_all: bool = False) -> dict:
     row["server_name"] = server.get("name", "")
     row["server_location"] = server.get("location", "")
     row["isp"] = data.get("isp", "")
+    row["is_vpn"] = data["interface"]["isVpn"]
     row["external_ip"] = data.get("interface", {}).get("externalIp", "")
     return row
 
