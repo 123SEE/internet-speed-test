@@ -84,6 +84,12 @@ class AutoSpeedTest:
         next_run = self.run_count * self.interval_seconds
         return next_run >= self.duration_seconds
     
+    def clear_folder(self):
+        for filename in os.listdir(gcs.LOCAL_IMAGE_DIR):
+            file_path = os.path.join(gcs.LOCAL_IMAGE_DIR, filename)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+    
 
     def speed_test(self, timestamp):
         """Run the Ookla CLI and Gcloud test, then save to csv."""
@@ -175,6 +181,7 @@ class AutoSpeedTest:
             try:
                 self.speed_test(timestamp)
                 print(f"--- [finish] Run {self.run_count} in {str((datetime.now() - timestamp)).split('.')[0]}---")
+                self.clear_folder()     # clear Test_Session_Images
             except Exception as e:
                 print(f"Run {self.run_count} failed: {e}")
         
