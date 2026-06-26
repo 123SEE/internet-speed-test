@@ -1,0 +1,9 @@
+# Downloaded Ookla Speedtest CLI binary (re-downloadable, ~MB)
+bin/
+
+logs/
+data/*
+
+# Python
+__pycache__/
+*.pyc
