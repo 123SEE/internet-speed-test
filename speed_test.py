@@ -10,13 +10,8 @@ from datetime import datetime, timezone
 import argparse
 from typing import List, Optional
 
-# GCS throughput benchmark. Swap this import to choose the implementation;
-# both modules expose an identical main() -> metrics dict, so the call below
-# works for either. Guarded so the speed test still runs if GCS/creds are
-# unavailable (e.g. on a dev machine that isn't the kiosk).
 try:
-    # import KioskDataClient as gcs            # standalone (no module-kiosk-data import)
-    import kiosk_data_client_comms as gcs  # repo-import version
+    import kiosk_data_client as gcs
 except Exception as _e:
     print(f"GCS benchmark unavailable ({_e}); running speed test only.")
     gcs = None
@@ -28,10 +23,12 @@ get_folder_name = lambda: datetime.now().strftime("%Y%b%d_%H_%M_%S")
 class AutoSpeedTest:
     """Run speed_test.main() on a fixed interval until a total duration elapses."""
 
-    def __init__(self, device:str, interval=2*60, duration=2*60*60):
+    def __init__(self, device:str, gcloud:bool, interval=5*60, duration=30*60*60):
 
-        self.interval_seconds = interval   # default: 2 minutes
-        self.duration_seconds = duration   # default: 2 hours
+        self.interval_seconds = interval   # default: 5 minutes
+        self.duration_seconds = duration   # default: 30 hours, ~360 data points
+
+        self.gcloud = gcloud
 
         self.start_time = None   # set when the run begins
         self.run_count = 0
@@ -44,6 +41,7 @@ class AutoSpeedTest:
 
         try:
             os.mkdir(os.path.join(os.getcwd(), "data"))
+            os.mkdir(os.path.join(os.getcwd(), "Test_Session_Images"))
         except FileExistsError:
             pass
 
@@ -65,7 +63,7 @@ class AutoSpeedTest:
                 "server_name", "server_location",
                 "isp", "external_ip",
                 "is_vpn",
-                "gcs_upload_mbps", "gcs_download_mbps",
+                *(["gcs_upload_mbps", "gcs_download_mbps"] if self.gcloud else []),
             ])
 
         print(f"Started recording to {self.csv_filename}")
@@ -87,12 +85,10 @@ class AutoSpeedTest:
         return next_run >= self.duration_seconds
     
 
-    def speed_test(self):
-        """Run the Ookla CLI and return a flat dict row for the CSV.
+    def speed_test(self, timestamp):
+        """Run the Ookla CLI and Gcloud test, then save to csv."""
 
-        If show_all is True, also pretty-print the full parsed JSON to stdout.
-        """
-
+        # Run Ookla speed test
         try:
             proc = subprocess.run(
                 [
@@ -126,7 +122,7 @@ class AutoSpeedTest:
         interface = data.get("interface", {})
 
         row = [
-            datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            timestamp,
             self.bandwidth_to_mbps(data["download"]["bandwidth"]),
             self.bandwidth_to_mbps(data["upload"]["bandwidth"]),
             round(data["ping"]["latency"], 2),
@@ -138,33 +134,29 @@ class AutoSpeedTest:
             interface.get("externalIp", ""),
             interface.get("isVpn", False),
         ]
+        print(f"[log] saved {len(row)} data points from speedtest cli")
 
-        # Ookla ran above; now run the GCS throughput tests on the same link so
-        # both measurements land on one CSV row for cross-checking. They run
-        # sequentially (never overlapping the Ookla test) so neither steals
-        # bandwidth from the other. A GCS failure must not kill the speed loop.
-        gcs_metrics = {}
-        if gcs is not None:
-            try:
-                gcs_metrics = gcs.main()
-            except Exception as e:
-                print(f"GCS benchmark failed: {e}")
+        # Run gcloud upload/download tests
+        if self.gcloud:
+            gcs_metrics = {}
+            if gcs is not None:
+                try:
+                    gcs_metrics = gcs.main()
+                except Exception as e:
+                    print(f"GCS benchmark failed: {e}")
 
-        row += [
-            gcs_metrics.get("gcs_upload_mbps", ""),
-            gcs_metrics.get("gcs_download_mbps", ""),
-        ]
+            row += [
+                gcs_metrics.get("gcs_upload_mbps", ""),
+                gcs_metrics.get("gcs_download_mbps", ""),
+            ]
 
         self.write_row(row)
 
 
     def run_speed_tests(self):
-        """Loop: wait until the next wall-clock tick, then run a test.
-
-        Ticks are anchored to the wall clock (multiples of the interval since
-        the Unix epoch) rather than to this process's start time, so two
-        devices fire on the same :00 boundaries (12:00:00, 12:02:00, ...) and
-        their timestamps line up regardless of when each script was launched.
+        """
+        Main loop logic.
+        Run a test on the  :00 dot to sync up test on multiple devices.
         """
 
         self.start_time = time.monotonic()
@@ -177,9 +169,12 @@ class AutoSpeedTest:
             time.sleep(next_tick - now)
 
             self.run_count += 1
-            print(f"--- Run {self.run_count}:  {datetime.now().time()}---")
+            timestamp = datetime.now()
+            print(f"--- Run {self.run_count}:  {str(timestamp).split('.')[0]}---")
+
             try:
-                self.speed_test()
+                self.speed_test(timestamp)
+                print(f"--- [finish] Run {self.run_count} in {str((datetime.now() - timestamp)).split('.')[0]}---")
             except Exception as e:
                 print(f"Run {self.run_count} failed: {e}")
         
@@ -188,8 +183,9 @@ class AutoSpeedTest:
 def parse_args(argv: Optional[List[str]] = None):
     p = argparse.ArgumentParser(description="Run network speed test on a device.")
     p.add_argument("--device", type=str, required=True, help="Run this script on the kiosk ('Kiosk') or the test stand ('Stand')")
-    p.add_argument("--duration", type=int, required=False, help="Total duration in seconds to run the test for; default 2hrs")
-    p.add_argument("--interval", type=int, required=False, help="Interval in seconds between network speed runs; default 2mins")
+    p.add_argument("--gcloud", type=bool, required=True, help="True if testing on kiosk for gcloud upload/download")
+    p.add_argument("--duration", type=int, required=False, help="Total duration in seconds to run the test for; default 30hrs")
+    p.add_argument("--interval", type=int, required=False, help="Interval in seconds between network speed runs; default 5mins")
     return p.parse_args(argv)
 
 def main(argv: Optional[List[str]] = None):
@@ -206,7 +202,7 @@ def main(argv: Optional[List[str]] = None):
 
     test = None
     try:
-        test = AutoSpeedTest(device=args.device, **kwargs)
+        test = AutoSpeedTest(device=args.device, gcloud=args.gcloud, **kwargs)
         test.run_speed_tests()
     except KeyboardInterrupt:
         print("\nCtrl+C received — closing devices")
