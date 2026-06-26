@@ -6,14 +6,14 @@ import time
 import csv
 import json
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime
 import argparse
 from typing import List, Optional
 
 try:
     import kiosk_data_client as gcs
 except Exception as _e:
-    print(f"GCS benchmark unavailable ({_e}); running speed test only.")
+    print(f"Running speed test only. GCS benchmark unavailable ({_e}).")
     gcs = None
 
 
@@ -23,12 +23,13 @@ get_folder_name = lambda: datetime.now().strftime("%Y%b%d_%H_%M_%S")
 class AutoSpeedTest:
     """Run speed_test.main() on a fixed interval until a total duration elapses."""
 
-    def __init__(self, device:str, gcloud:bool, interval=5*60, duration=30*60*60):
+    def __init__(self, device:str, gcloud:bool, interval=5*60, duration=30*60*60, server=None):
 
         self.interval_seconds = interval   # default: 5 minutes
         self.duration_seconds = duration   # default: 30 hours, ~360 data points
 
         self.gcloud = gcloud
+        self.server = server
 
         self.start_time = None   # set when the run begins
         self.run_count = 0
@@ -96,14 +97,20 @@ class AutoSpeedTest:
         """Run the Ookla CLI and Gcloud test, then save to csv."""
 
         # Run Ookla speed test
+        cmd = [
+            str(os.path.join(os.getcwd(), "bin", "speedtest")),
+            "--accept-license",
+            "--accept-gdpr",
+            "--format=json",
+        ]
+        # Pin to a specific server if one was provided; otherwise the CLI
+        # auto-selects the lowest-latency server each run.
+        if self.server is not None:
+            cmd.append(f"--server-id={self.server}")
+
         try:
             proc = subprocess.run(
-                [
-                    str(os.path.join(os.getcwd(), "bin", "speedtest")),
-                    "--accept-license",
-                    "--accept-gdpr",
-                    "--format=json",
-                ],
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -181,19 +188,24 @@ class AutoSpeedTest:
 
             try:
                 self.speed_test(timestamp)
-                self.clear_folder()     # clear Test_Session_Images/
-                print(f"--- [finish] Run {self.run_count} in {str((datetime.now() - timestamp)).split('.')[0]}---")
+                if self.gcloud: 
+                    self.clear_folder()     # clear Test_Session_Images/
+                print(f"[finish] run {self.run_count} took {str((datetime.now() - timestamp)).split('.')[0]}")
             except Exception as e:
                 print(f"Run {self.run_count} failed: {e}")
         
         print(f"\nFinished logging network speed for {self.duration_seconds / 3600} hours.")
 
+def str2bool(value):
+    return value.lower() == "true"
+
 def parse_args(argv: Optional[List[str]] = None):
     p = argparse.ArgumentParser(description="Run network speed test on a device.")
     p.add_argument("--device", type=str, required=True, help="Run this script on the kiosk ('Kiosk') or the test stand ('Stand')")
-    p.add_argument("--gcloud", type=bool, required=True, help="True if testing on kiosk for gcloud upload/download")
+    p.add_argument("--gcloud", type=str2bool, required=True, help="True if testing on kiosk for gcloud upload/download")
     p.add_argument("--duration", type=int, required=False, help="Total duration in seconds to run the test for; default 30hrs")
     p.add_argument("--interval", type=int, required=False, help="Interval in seconds between network speed runs; default 5mins")
+    p.add_argument("--server", type=int, required=False, help="Manually choose a server id, or random by default")
     return p.parse_args(argv)
 
 def main(argv: Optional[List[str]] = None):
@@ -207,6 +219,8 @@ def main(argv: Optional[List[str]] = None):
         kwargs["interval"] = args.interval
     if args.duration is not None:
         kwargs["duration"] = args.duration
+    if args.server is not None:
+        kwargs["server"] = args.server
 
     test = None
     try:

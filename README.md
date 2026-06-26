@@ -8,6 +8,11 @@ Downloads the [Ookla Speedtest CLI](https://www.speedtest.net/apps/cli) build in
 ./install_speedtest.sh
 ```
 
+## Choosing a server
+```sh
+./bin/speedtest --servers
+```
+
 ## Run the speed test
 
 ```sh
@@ -19,6 +24,7 @@ python3.9 speed_test.py --device testing_device --gcloud true_or_false
 --gcloud GCLOUD      True if testing on kiosk for gcloud upload/download
 --duration DURATION  Total duration in seconds to run the test for; default 30hrs
 --interval INTERVAL  Interval in seconds between network speed runs; default 5mins
+--server SERVER      Manually choose a server id, or random by default
 ```
 
 ## Looking at output data
